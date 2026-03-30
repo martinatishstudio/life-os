@@ -173,3 +173,49 @@ export interface TrainingLog {
   metrics: Record<string, unknown> | null
   created_at: string
 }
+
+export type TimeHorizon = 'vision_10y' | '5y' | '3y' | '1y' | 'quarter' | 'month' | 'week' | 'day'
+
+export const TIME_HORIZON_LABELS: Record<TimeHorizon, string> = {
+  vision_10y: 'Visjon (10 år)',
+  '5y': '5 år',
+  '3y': '3 år',
+  '1y': '1 år',
+  quarter: 'Kvartal',
+  month: 'Måned',
+  week: 'Uke',
+  day: 'Dag',
+}
+
+export const TIME_HORIZON_ORDER: TimeHorizon[] = [
+  'vision_10y', '5y', '3y', '1y', 'quarter', 'month', 'week', 'day',
+]
+
+export interface CascadeGoal {
+  id: string
+  user_id: string
+  category: Category
+  time_horizon: TimeHorizon
+  title: string
+  description?: string
+  target_value?: number
+  current_value: number
+  unit?: string
+  start_date?: string
+  deadline?: string
+  parent_id?: string
+  status: 'active' | 'completed' | 'paused' | 'abandoned'
+  created_at: string
+  updated_at: string
+  // Populated via joins or client-side
+  children?: CascadeGoal[]
+  parent?: CascadeGoal
+}
+
+export interface CascadeGoalProgress {
+  id: string
+  goal_id: string
+  value: number
+  note?: string
+  logged_at: string
+}

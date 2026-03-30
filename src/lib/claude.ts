@@ -337,6 +337,30 @@ Bryt denne ned til konkrete milepæler for hvert år fra 2026 til 2036, per kate
 [{"year": 2026, "category": "business", "milestone": "..."}, ...]`
     }
 
+    case 'cascade_breakdown': {
+      const d = data as {
+        goal: string; category: string; timeHorizon: string;
+        targetLevel: string; existingChildren: string; context: string
+      }
+      const levelLabels: Record<string, string> = {
+        '5y': '5-årsmål', '3y': '3-årsmål', '1y': '1-årsmål',
+        quarter: 'kvartalsmål', month: 'månedsmål', week: 'ukemål', day: 'dagsmål',
+      }
+      const targetLabel = levelLabels[d.targetLevel] || d.targetLevel
+      return `Martin har dette målet:
+
+MÅL: ${d.goal}
+KATEGORI: ${d.category}
+TIDSNIVÅ: ${d.timeHorizon}
+
+${d.existingChildren ? `EKSISTERENDE UNDERORDNEDE MÅL:\n${d.existingChildren}\n` : ''}
+${d.context ? `KONTEKST:\n${d.context}\n` : ''}
+Bryt dette ned til 2-4 konkrete ${targetLabel}. Hvert mål skal ha en title, description, target_value (tall eller null), unit, og deadline (YYYY-MM-DD).
+
+Returner KUN JSON (ingen annen tekst):
+[{"title": "...", "description": "...", "target_value": number_or_null, "unit": "string_or_null", "deadline": "YYYY-MM-DD"}]`
+    }
+
     case 'finance_analysis': {
       const d = data as { spending: string; budgets: string; savings: string }
       return `Her er Martin sitt forbruk denne måneden vs budsjett:

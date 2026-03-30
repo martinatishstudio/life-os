@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 // Claude API used for brief generation via fetch
 import { CATEGORY_MAP, type Category } from '@/types'
-import type { Habit, HabitCompletion, Goal } from '@/types'
+import type { Habit, HabitCompletion, CascadeGoal } from '@/types'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,8 +26,7 @@ interface SmartDashboardProps {
   completions: HabitCompletion[]
   totalTodayHabits: number
   streak: number
-  urgentGoalCount: number
-  urgentGoals: Goal[]
+  quarterGoals: CascadeGoal[]
   coachHealthPct: number
   activities: ActivityItem[]
 }
@@ -74,6 +73,28 @@ function daysUntil(deadline: string): number {
   now.setHours(0, 0, 0, 0)
   const d = new Date(deadline + 'T00:00:00')
   return Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function getOnTrackStatus(goal: CascadeGoal): 'ahead' | 'on_track' | 'behind' {
+  if (!goal.target_value || goal.target_value === 0) return 'on_track'
+  const progressPct = (goal.current_value / goal.target_value) * 100
+
+  const start = goal.start_date ? new Date(goal.start_date) : new Date(goal.created_at)
+  const end = goal.deadline ? new Date(goal.deadline) : new Date(start.getTime() + 90 * 24 * 60 * 60 * 1000)
+  const now = new Date()
+  const totalDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+  const elapsed = (now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+  const timePct = Math.min(100, (elapsed / totalDays) * 100)
+
+  if (progressPct >= timePct) return 'ahead'
+  if (progressPct >= timePct - 10) return 'on_track'
+  return 'behind'
+}
+
+const STATUS_DOT_COLOR: Record<'ahead' | 'on_track' | 'behind', string> = {
+  ahead: '#22c55e',
+  on_track: '#eab308',
+  behind: '#ef4444',
 }
 
 // Simple markdown renderer
@@ -174,8 +195,7 @@ export function SmartDashboard({
   completions: initialCompletions,
   totalTodayHabits,
   streak,
-  urgentGoalCount,
-  urgentGoals,
+  quarterGoals,
   coachHealthPct,
   activities,
 }: SmartDashboardProps) {
@@ -223,10 +243,11 @@ export function SmartDashboard({
     setBriefError(null)
     try {
       // Fetch fresh data for the brief
-      const [habitsRes, completionsRes, goalsRes, milestonesRes, prioritiesRes, snapshotsRes] = await Promise.all([
+      const [habitsRes, completionsRes, goalsRes, cascadeRes, milestonesRes, prioritiesRes, snapshotsRes] = await Promise.all([
         supabase.from('habits').select('*').eq('active', true),
         supabase.from('habit_completions').select('*').eq('completed_date', today),
         supabase.from('goals').select('*').eq('status', 'active').order('deadline'),
+        supabase.from('cascade_goals').select('*').eq('status', 'active').in('time_horizon', ['quarter', 'month']).order('deadline'),
         supabase.from('milestones').select('*').eq('completed', false).order('target_date'),
         supabase.from('daily_priorities').select('*').eq('date', today).order('sort_order'),
         supabase.from('progress_snapshots').select('*').order('week_start', { ascending: false }).limit(7),
@@ -235,6 +256,7 @@ export function SmartDashboard({
       const hList = habitsRes.data ?? []
       const cList = completionsRes.data ?? []
       const gList = goalsRes.data ?? []
+      const cgList = (cascadeRes.data ?? []) as CascadeGoal[]
       const mList = milestonesRes.data ?? []
       const pList = prioritiesRes.data ?? []
       const sList = snapshotsRes.data ?? []
@@ -247,6 +269,14 @@ export function SmartDashboard({
         const pct = g.target_value ? Math.round((g.current_value / g.target_value) * 100) : null
         const deadline = g.deadline ? ` (frist: ${g.deadline})` : ''
         return `${g.title}${pct !== null ? ` — ${pct}%` : ''}${deadline}`
+      }).join('\n')
+
+      const cascadeGoalsText = cgList.map((g) => {
+        const pct = g.target_value ? Math.round((g.current_value / g.target_value) * 100) : null
+        const status = getOnTrackStatus(g)
+        const statusLabel = status === 'ahead' ? 'foran' : status === 'on_track' ? 'på sporet' : 'bak skjema'
+        const deadline = g.deadline ? ` (frist: ${g.deadline})` : ''
+        return `[${g.time_horizon}] ${g.title}${pct !== null ? ` ${pct}%` : ''} (${statusLabel})${deadline}`
       }).join('\n')
 
       const thirtyDays = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -275,6 +305,7 @@ export function SmartDashboard({
             completedHabits: completedHabits || 'Ingen',
             pendingHabits: pendingHabits || 'Ingen',
             goals: goalsText || 'Ingen aktive mål',
+            cascadeGoals: cascadeGoalsText || 'Ingen aktive kvartalsmål',
             milestones: upcomingMilestones || 'Ingen innen 30 dager',
             priorities: prioritiesText,
             scores: scoresText,
@@ -390,8 +421,8 @@ export function SmartDashboard({
         <MetricCard label="Streak" value={<span>{streak} dager 🔥</span>} />
         <MetricCard
           label="Mål som haster"
-          value={urgentGoalCount}
-          sub={<p className="text-xs text-gray-500">{urgentGoalCount > 0 ? 'mål med deadline snart' : 'ingen haster'}</p>}
+          value={quarterGoals.filter((g) => getOnTrackStatus(g) === 'behind').length}
+          sub={<p className="text-xs text-gray-500">{quarterGoals.filter((g) => getOnTrackStatus(g) === 'behind').length > 0 ? 'kvartalsmål bak skjema' : 'ingen haster'}</p>}
         />
         <MetricCard
           label="Coach-helse"
@@ -461,16 +492,17 @@ export function SmartDashboard({
         </ul>
       </div>
 
-      {/* Focus Areas (Urgent Goals) */}
+      {/* Focus Areas (Quarter Goals) */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6">
         <h2 className="text-sm font-semibold text-gray-700 mb-3">Fokusområder</h2>
-        {urgentGoals.length === 0 ? (
-          <p className="text-sm text-gray-400 italic">Ingen mål med deadline satt</p>
+        {quarterGoals.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">Ingen aktive kvartalsmål</p>
         ) : (
           <ul className="space-y-3">
-            {urgentGoals.slice(0, 3).map((goal) => {
+            {quarterGoals.map((goal) => {
               const pct = goal.target_value ? Math.min(100, Math.round((goal.current_value / goal.target_value) * 100)) : 0
               const remaining = goal.deadline ? daysUntil(goal.deadline) : null
+              const status = getOnTrackStatus(goal)
               return (
                 <li key={goal.id}>
                   <div className="flex items-center gap-2 mb-1">
@@ -479,11 +511,16 @@ export function SmartDashboard({
                       style={{ backgroundColor: CATEGORY_DOT_COLOR[goal.category] ?? '#6b7280' }}
                     />
                     <span className="text-sm font-medium text-gray-800 flex-1">{goal.title}</span>
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      title={status === 'ahead' ? 'Foran skjema' : status === 'on_track' ? 'På sporet' : 'Bak skjema'}
+                      style={{ backgroundColor: STATUS_DOT_COLOR[status] }}
+                    />
                     {remaining !== null && (
                       <span className="text-xs text-gray-500">{remaining} dager igjen</span>
                     )}
                   </div>
-                  {goal.target_value && (
+                  {goal.target_value ? (
                     <div className="ml-4">
                       <div className="w-full h-1.5 rounded-full bg-gray-100">
                         <div
@@ -494,6 +531,10 @@ export function SmartDashboard({
                       <p className="text-xs text-gray-400 mt-0.5">
                         {goal.current_value}{goal.unit ? ` ${goal.unit}` : ''} / {goal.target_value}{goal.unit ? ` ${goal.unit}` : ''} ({pct}%)
                       </p>
+                    </div>
+                  ) : (
+                    <div className="ml-4">
+                      <p className="text-xs text-gray-400">Ingen tallmål satt</p>
                     </div>
                   )}
                 </li>

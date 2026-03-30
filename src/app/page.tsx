@@ -1,5 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import type { Goal, Habit, HabitCompletion, ContextModule, ContextSnapshot } from '@/types'
+import type { Habit, HabitCompletion, ContextModule, ContextSnapshot, CascadeGoal } from '@/types'
 import { SmartDashboard } from '@/components/dashboard/SmartDashboard'
 import { toDateString } from '@/lib/utils'
 
@@ -76,7 +76,7 @@ async function getDashboardData() {
     briefRes,
     habitsRes,
     completionsRes,
-    goalsRes,
+    cascadeGoalsRes,
     recentHabitCompletionsRes,
     recentJournalsRes,
     recentGoalLogsRes,
@@ -93,7 +93,12 @@ async function getDashboardData() {
       .limit(1),
     supabase.from('habits').select('*').eq('active', true),
     supabase.from('habit_completions').select('*').eq('completed_date', today),
-    supabase.from('goals').select('*').eq('status', 'active').order('deadline', { ascending: true, nullsFirst: false }),
+    supabase
+      .from('cascade_goals')
+      .select('*')
+      .eq('status', 'active')
+      .in('time_horizon', ['quarter', 'month'])
+      .order('deadline', { ascending: true, nullsFirst: false }),
     // Recent habit completions with habit title via join
     supabase
       .from('habit_completions')
@@ -123,7 +128,10 @@ async function getDashboardData() {
   const userId = userRes.data.user?.id ?? ''
   const habits = (habitsRes.data ?? []) as Habit[]
   const completions = (completionsRes.data ?? []) as HabitCompletion[]
-  const goals = (goalsRes.data ?? []) as Goal[]
+  const cascadeGoals = (cascadeGoalsRes.data ?? []) as CascadeGoal[]
+
+  // Quarter goals for focus areas
+  const quarterGoals = cascadeGoals.filter((g) => g.time_horizon === 'quarter' || g.time_horizon === 'month')
 
   // Brief
   const briefEntry = briefRes.data?.[0]
@@ -140,12 +148,6 @@ async function getDashboardData() {
     }
     return false
   })
-  // Urgent goals: deadline within 14 days
-  const fourteenDaysOut = new Date()
-  fourteenDaysOut.setDate(fourteenDaysOut.getDate() + 14)
-  const fourteenStr = toDateString(fourteenDaysOut)
-  const urgentGoals = goals.filter((g) => g.deadline && g.deadline <= fourteenStr)
-
   // Coach health
   const modules = (contextModulesRes.data ?? []) as ContextModule[]
   const allSnapshots = (contextSnapshotsRes.data ?? []) as ContextSnapshot[]
@@ -204,8 +206,7 @@ async function getDashboardData() {
     completions,
     totalTodayHabits: todayHabits.length,
     streak,
-    urgentGoalCount: urgentGoals.length,
-    urgentGoals,
+    quarterGoals,
     coachHealthPct,
     activities,
   }
