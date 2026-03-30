@@ -155,3 +155,21 @@ export interface ContextSnapshot {
   values: Record<string, string | number | string[]>
   created_at: string
 }
+
+export interface GoalProgressLog {
+  id: string
+  goal_id: string
+  value: number
+  logged_at: string
+}
+
+export interface TrainingLog {
+  id: string
+  user_id: string
+  date: string
+  type: string
+  duration_minutes: number | null
+  notes: string | null
+  metrics: Record<string, unknown> | null
+  created_at: string
+}

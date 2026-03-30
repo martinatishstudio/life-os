@@ -1,60 +1,137 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { CATEGORIES, type Category } from '@/types'
-import type { Goal, Habit, HabitCompletion, ProgressSnapshot, DailyPriority } from '@/types'
-import { CategoryCard } from '@/components/dashboard/CategoryCard'
-import { WeekChart } from '@/components/dashboard/WeekChart'
-import { DailyBrief } from '@/components/dashboard/DailyBrief'
-import { TodayPriorities } from '@/components/dashboard/TodayPriorities'
-import { getWeekStart, toDateString } from '@/lib/utils'
+import type { Goal, Habit, HabitCompletion, ContextModule, ContextSnapshot } from '@/types'
+import { SmartDashboard } from '@/components/dashboard/SmartDashboard'
+import { toDateString } from '@/lib/utils'
 
 export const revalidate = 0
 
-async function getDashboardData() {
-  const supabase = await createServerSupabaseClient()
+// ---------------------------------------------------------------------------
+// Streak calculation: count consecutive days backwards from yesterday
+// where at least 1 habit was completed
+// ---------------------------------------------------------------------------
+async function calculateStreak(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>): Promise<number> {
+  const ninetyDaysAgo = new Date()
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
 
-  const today = toDateString(new Date())
-  const weekStart = toDateString(getWeekStart())
+  const { data } = await supabase
+    .from('habit_completions')
+    .select('completed_date')
+    .gte('completed_date', toDateString(ninetyDaysAgo))
+    .order('completed_date', { ascending: false })
 
-  const [userRes, goalsRes, habitsRes, completionsRes, snapshotsRes, prioritiesRes] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.from('goals').select('*').eq('status', 'active'),
-    supabase.from('habits').select('*').eq('active', true),
-    supabase.from('habit_completions').select('*').eq('completed_date', today),
-    supabase.from('progress_snapshots').select('*').eq('week_start', weekStart),
-    supabase.from('daily_priorities').select('*').eq('date', today).order('sort_order'),
-  ])
+  if (!data || data.length === 0) return 0
 
-  return {
-    userId: userRes.data.user?.id ?? '',
-    goals: (goalsRes.data ?? []) as Goal[],
-    habits: (habitsRes.data ?? []) as Habit[],
-    completions: (completionsRes.data ?? []) as HabitCompletion[],
-    snapshots: (snapshotsRes.data ?? []) as ProgressSnapshot[],
-    priorities: (prioritiesRes.data ?? []) as DailyPriority[],
-    today,
+  const dateSet = new Set(data.map((d: { completed_date: string }) => d.completed_date))
+  const todayStr = toDateString(new Date())
+
+  // Start from today. If today has completions, count it; otherwise start from yesterday.
+  const cursor = new Date()
+  cursor.setHours(0, 0, 0, 0)
+  if (!dateSet.has(todayStr)) {
+    cursor.setDate(cursor.getDate() - 1)
   }
+
+  let streak = 0
+  while (dateSet.has(toDateString(cursor))) {
+    streak++
+    cursor.setDate(cursor.getDate() - 1)
+  }
+
+  return streak
 }
 
-export default async function DashboardPage() {
-  const { userId, goals, habits, completions, snapshots, priorities, today } = await getDashboardData()
+// ---------------------------------------------------------------------------
+// Coach health: % of context modules with up-to-date snapshots
+// ---------------------------------------------------------------------------
+function calcCoachHealth(
+  modules: ContextModule[],
+  snapshots: ContextSnapshot[]
+): number {
+  if (modules.length === 0) return 100
 
-  const completedHabitIds = new Set(completions.map((c) => c.habit_id))
+  const FREQ_DAYS: Record<string, number> = { monthly: 30, quarterly: 90, yearly: 365 }
+  const now = Date.now()
+  let upToDate = 0
 
-  const categoryStats = CATEGORIES.map((cat) => {
-    const catGoals = goals.filter((g) => g.category === cat.id)
-    const catHabits = habits.filter((h) => h.category === cat.id)
-    const catCompleted = catHabits.filter((h) => completedHabitIds.has(h.id)).length
-    const snap = snapshots.find((s) => s.category === cat.id)
+  for (const mod of modules) {
+    const snap = snapshots.find((s) => s.module_id === mod.id)
+    if (!snap) continue
+    const age = Math.floor((now - new Date(snap.created_at).getTime()) / (1000 * 60 * 60 * 24))
+    const maxAge = FREQ_DAYS[mod.update_frequency] ?? 30
+    if (age <= maxAge) upToDate++
+  }
 
-    return {
-      category: cat.id as Category,
-      score: snap?.score ?? 0,
-      goalCount: catGoals.length,
-      completedHabits: catCompleted,
-      totalHabits: catHabits.length,
-    }
-  })
+  return Math.round((upToDate / modules.length) * 100)
+}
 
+// ---------------------------------------------------------------------------
+// Data fetching
+// ---------------------------------------------------------------------------
+async function getDashboardData() {
+  const supabase = await createServerSupabaseClient()
+  const today = toDateString(new Date())
+
+  const [
+    userRes,
+    briefRes,
+    habitsRes,
+    completionsRes,
+    goalsRes,
+    recentHabitCompletionsRes,
+    recentJournalsRes,
+    recentGoalLogsRes,
+    contextModulesRes,
+    contextSnapshotsRes,
+  ] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase
+      .from('journal_entries')
+      .select('*')
+      .eq('type', 'daily_brief')
+      .eq('date', today)
+      .order('created_at', { ascending: false })
+      .limit(1),
+    supabase.from('habits').select('*').eq('active', true),
+    supabase.from('habit_completions').select('*').eq('completed_date', today),
+    supabase.from('goals').select('*').eq('status', 'active').order('deadline', { ascending: true, nullsFirst: false }),
+    // Recent habit completions with habit title via join
+    supabase
+      .from('habit_completions')
+      .select('id, created_at, habit_id, habits(title)')
+      .order('created_at', { ascending: false })
+      .limit(5),
+    // Recent journal entries
+    supabase
+      .from('journal_entries')
+      .select('id, type, created_at')
+      .order('created_at', { ascending: false })
+      .limit(3),
+    // Recent goal progress logs with goal title
+    supabase
+      .from('goal_progress_log')
+      .select('id, logged_at, goal_id, goals(title)')
+      .order('logged_at', { ascending: false })
+      .limit(3),
+    // Context modules
+    supabase.from('context_modules').select('*').order('sort_order'),
+    // Latest context snapshot per module (get all, we'll pick latest per module)
+    supabase.from('context_snapshots').select('*').order('created_at', { ascending: false }),
+  ])
+
+  const streak = await calculateStreak(supabase)
+
+  const userId = userRes.data.user?.id ?? ''
+  const habits = (habitsRes.data ?? []) as Habit[]
+  const completions = (completionsRes.data ?? []) as HabitCompletion[]
+  const goals = (goalsRes.data ?? []) as Goal[]
+
+  // Brief
+  const briefEntry = briefRes.data?.[0]
+  const hasTodayBrief = !!briefEntry?.ai_response
+  const todayBrief = briefEntry?.ai_response ?? null
+  const todayBriefId = briefEntry?.id ?? null
+
+  // Today's habits (daily + weekdays on weekdays)
   const todayHabits = habits.filter((h) => {
     if (h.frequency === 'daily') return true
     if (h.frequency === 'weekdays') {
@@ -63,64 +140,78 @@ export default async function DashboardPage() {
     }
     return false
   })
+  // Urgent goals: deadline within 14 days
+  const fourteenDaysOut = new Date()
+  fourteenDaysOut.setDate(fourteenDaysOut.getDate() + 14)
+  const fourteenStr = toDateString(fourteenDaysOut)
+  const urgentGoals = goals.filter((g) => g.deadline && g.deadline <= fourteenStr)
 
-  const todayCompletedCount = todayHabits.filter((h) => completedHabitIds.has(h.id)).length
-  const overallScore = categoryStats.length > 0
-    ? Math.round(categoryStats.reduce((sum, c) => sum + c.score, 0) / categoryStats.length)
-    : 0
+  // Coach health
+  const modules = (contextModulesRes.data ?? []) as ContextModule[]
+  const allSnapshots = (contextSnapshotsRes.data ?? []) as ContextSnapshot[]
+  // Pick latest snapshot per module
+  const latestSnapshots: ContextSnapshot[] = []
+  const seenModules = new Set<string>()
+  for (const snap of allSnapshots) {
+    if (!seenModules.has(snap.module_id)) {
+      seenModules.add(snap.module_id)
+      latestSnapshots.push(snap)
+    }
+  }
+  const coachHealthPct = calcCoachHealth(modules, latestSnapshots)
 
-  const dateLabel = new Date(today + 'T12:00:00').toLocaleDateString('nb-NO', {
-    weekday: 'long', day: 'numeric', month: 'long',
-  })
+  // Activity feed
+  type ActivityItem = { id: string; text: string; created_at: string }
+  const activityItems: ActivityItem[] = []
 
-  return (
-    <div className="px-4 py-6 md:px-8 max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <p className="text-xs text-gray-400 uppercase tracking-wide font-medium capitalize">
-          {dateLabel}
-        </p>
-        <h1 className="text-2xl font-bold text-gray-900 mt-1">Oversikt</h1>
-      </div>
+  // Habit completions
+  for (const hc of recentHabitCompletionsRes.data ?? []) {
+    const habitData = hc.habits as unknown as { title: string } | null
+    const title = habitData?.title ?? 'Ukjent vane'
+    activityItems.push({ id: hc.id, text: `Fullf\u00f8rte ${title}`, created_at: hc.created_at })
+  }
 
-      {/* Top stats row */}
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold text-gray-900">{overallScore}</p>
-          <p className="text-xs text-gray-500 mt-0.5">Ukesscore</p>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold text-gray-900">
-            {todayCompletedCount}/{todayHabits.length}
-          </p>
-          <p className="text-xs text-gray-500 mt-0.5">Vaner i dag</p>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold text-gray-900">{goals.length}</p>
-          <p className="text-xs text-gray-500 mt-0.5">Aktive mål</p>
-        </div>
-      </div>
+  // Journal entries
+  const TYPE_LABELS: Record<string, string> = {
+    daily_brief: 'Daglig brief',
+    weekly_review: 'Ukentlig gjennomgang',
+    monthly_review: 'M\u00e5nedlig gjennomgang',
+    note: 'Notat',
+  }
+  for (const je of recentJournalsRes.data ?? []) {
+    const label = TYPE_LABELS[je.type] ?? je.type
+    activityItems.push({ id: je.id, text: `${label} skrevet`, created_at: je.created_at })
+  }
 
-      <div className="grid md:grid-cols-2 gap-6 mb-6">
-        <TodayPriorities priorities={priorities} today={today} userId={userId} />
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Ukens balanse</h2>
-          <WeekChart snapshots={snapshots} />
-        </div>
-      </div>
+  // Goal progress logs
+  for (const gp of recentGoalLogsRes.data ?? []) {
+    const goalData = gp.goals as unknown as { title: string } | null
+    const title = goalData?.title ?? 'Ukjent m\u00e5l'
+    activityItems.push({ id: gp.id, text: `Oppdaterte ${title}`, created_at: gp.logged_at })
+  }
 
-      {/* Category cards */}
-      <div className="mb-6">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Kategorier</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {categoryStats.map((stat) => (
-            <CategoryCard key={stat.category} {...stat} />
-          ))}
-        </div>
-      </div>
+  // Sort by time desc, take top 5
+  activityItems.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  const activities = activityItems.slice(0, 5)
 
-      {/* Daily brief — fetches fresh data from Supabase on click */}
-      <DailyBrief />
-    </div>
-  )
+  return {
+    userId,
+    today,
+    hasTodayBrief,
+    todayBrief,
+    todayBriefId,
+    habits,
+    completions,
+    totalTodayHabits: todayHabits.length,
+    streak,
+    urgentGoalCount: urgentGoals.length,
+    urgentGoals,
+    coachHealthPct,
+    activities,
+  }
+}
+
+export default async function DashboardPage() {
+  const data = await getDashboardData()
+  return <SmartDashboard {...data} />
 }

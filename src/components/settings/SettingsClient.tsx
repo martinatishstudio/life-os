@@ -89,6 +89,7 @@ export function SettingsClient() {
   // Editor state
   const [editorValues, setEditorValues] = useState<Record<string, string | number | string[]>>({})
   const [saving, setSaving] = useState(false)
+  const [onboardingStarted, setOnboardingStarted] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
 
   // Check-in state
@@ -423,14 +424,14 @@ export function SettingsClient() {
           </div>
         </div>
 
-        {view.step === 0 && Object.keys(editorValues).length === 0 ? (
+        {view.step === 0 && !onboardingStarted ? (
           <div className="text-center py-12">
             <h2 className="text-xl font-bold text-gray-900 mb-3">Velkommen til Life OS!</h2>
             <p className="text-sm text-gray-500 mb-8 max-w-md mx-auto leading-relaxed">
               For at coachen din skal gi deg gode r\u00e5d, trenger den \u00e5 kjenne deg. Bruk 10 minutter p\u00e5 \u00e5 fylle ut profilen din.
             </p>
             <button
-              onClick={() => setEditorValues({})}
+              onClick={() => { setOnboardingStarted(true); setEditorValues({}) }}
               className="text-sm font-semibold px-8 py-3 rounded-xl transition-colors"
               style={{ backgroundColor: '#0c3230', color: '#b8f04a' }}
             >

@@ -11,6 +11,7 @@ const navItems = [
   { href: '/goals', label: 'Mål', icon: '◉', mobile: true },
   { href: '/daily', label: 'Daglig', icon: '◐', mobile: true },
   { href: '/finance', label: 'Økonomi', icon: '◑', mobile: false },
+  { href: '/trends', label: 'Trender', icon: '◓', mobile: false },
   { href: '/review', label: 'Review', icon: '◒', mobile: true },
   { href: '/settings', label: 'Innstillinger', icon: '⚙', mobile: false },
 ]

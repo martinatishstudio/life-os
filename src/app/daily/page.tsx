@@ -1,8 +1,9 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import type { Habit, HabitCompletion, DailyPriority } from '@/types'
+import type { Habit, HabitCompletion, DailyPriority, TrainingLog } from '@/types'
 import { HabitList } from '@/components/habits/HabitList'
 import { TodayPriorities } from '@/components/dashboard/TodayPriorities'
 import { DailyBriefButton } from '@/components/daily/DailyBriefButton'
+import { TrainingLogSection } from '@/components/daily/TrainingLogSection'
 import { toDateString } from '@/lib/utils'
 
 export const revalidate = 0
@@ -42,11 +43,12 @@ export default async function DailyPage() {
   const today = toDateString(new Date())
   const ninetyDaysAgo = toDateString(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000))
 
-  const [habitsRes, completionsRes, allCompletionsRes, prioritiesRes] = await Promise.all([
+  const [habitsRes, completionsRes, allCompletionsRes, prioritiesRes, trainingRes] = await Promise.all([
     supabase.from('habits').select('*').order('time_of_day').order('category'),
     supabase.from('habit_completions').select('*').eq('completed_date', today),
     supabase.from('habit_completions').select('habit_id, completed_date').gte('completed_date', ninetyDaysAgo),
     supabase.from('daily_priorities').select('*').eq('date', today).order('sort_order'),
+    supabase.from('training_log').select('*').order('date', { ascending: false }).limit(7),
   ])
 
   const allHabits = (habitsRes.data ?? []) as Habit[]
@@ -54,6 +56,7 @@ export default async function DailyPage() {
   const completions = (completionsRes.data ?? []) as HabitCompletion[]
   const allCompletions = (allCompletionsRes.data ?? []) as HabitCompletion[]
   const priorities = (prioritiesRes.data ?? []) as DailyPriority[]
+  const trainingLogs = (trainingRes.data ?? []) as TrainingLog[]
 
   const morning = habits.filter((h) => h.time_of_day === 'morning')
   const anytime = habits.filter((h) => h.time_of_day === 'anytime')
@@ -113,6 +116,8 @@ export default async function DailyPage() {
         )}
 
         <HabitList title="" habits={[]} completedIds={completedIdsList} today={today} streaks={streaks} userId={userId} showAddOnly />
+
+        <TrainingLogSection logs={trainingLogs} />
       </div>
     </div>
   )

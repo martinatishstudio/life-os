@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { Sidebar } from '@/components/ui/Sidebar'
 import { ToastProvider } from '@/components/ui/Toast'
+import { QuickActions } from '@/components/ui/QuickActions'
 
 export const metadata: Metadata = {
   title: 'Life OS',
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main className="md:ml-52 min-h-screen pb-20 md:pb-0">
             {children}
           </main>
+          <QuickActions />
         </ToastProvider>
       </body>
     </html>
