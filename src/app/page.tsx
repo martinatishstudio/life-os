@@ -1,218 +1,164 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import type { Habit, HabitCompletion, ContextModule, ContextSnapshot, CascadeGoal } from '@/types'
-import { SmartDashboard } from '@/components/dashboard/SmartDashboard'
+import type { Habit, HabitCompletion, CascadeGoal, JournalEntry } from '@/types'
+import { TodayClient } from '@/components/today/TodayClient'
 import { toDateString } from '@/lib/utils'
 
 export const revalidate = 0
 
-// ---------------------------------------------------------------------------
-// Streak calculation: count consecutive days backwards from yesterday
-// where at least 1 habit was completed
-// ---------------------------------------------------------------------------
-async function calculateStreak(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>): Promise<number> {
-  const ninetyDaysAgo = new Date()
-  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+export default async function TodayPage() {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const userId = user?.id ?? ''
+  const today = toDateString(new Date())
 
-  const { data } = await supabase
-    .from('habit_completions')
-    .select('completed_date')
-    .gte('completed_date', toDateString(ninetyDaysAgo))
-    .order('completed_date', { ascending: false })
+  // Calculate week boundaries (Monday to Sunday)
+  const now = new Date()
+  const dayOfWeek = now.getDay() // 0=Sun, 1=Mon...
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+  const weekStart = new Date(now)
+  weekStart.setDate(now.getDate() + mondayOffset)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekStart.getDate() + 6)
+  const weekStartStr = toDateString(weekStart)
+  const weekEndStr = toDateString(weekEnd)
 
-  if (!data || data.length === 0) return 0
+  // Month boundaries
+  const monthStart = toDateString(new Date(now.getFullYear(), now.getMonth(), 1))
+  const monthEnd = toDateString(new Date(now.getFullYear(), now.getMonth() + 1, 0))
 
-  const dateSet = new Set(data.map((d: { completed_date: string }) => d.completed_date))
-  const todayStr = toDateString(new Date())
+  const ninetyDaysAgo = toDateString(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000))
 
-  // Start from today. If today has completions, count it; otherwise start from yesterday.
+  const [
+    briefRes,
+    habitsRes,
+    completionsRes,
+    allCompletionsRes,
+    dayGoalsRes,
+    weekGoalsRes,
+    weeklyReviewRes,
+    monthlyReviewRes,
+  ] = await Promise.all([
+    // Today's brief
+    supabase.from('journal_entries').select('*')
+      .eq('type', 'daily_brief').eq('date', today)
+      .order('created_at', { ascending: false }).limit(1),
+    // Active habits
+    supabase.from('habits').select('*').eq('active', true),
+    // Today's completions
+    supabase.from('habit_completions').select('*').eq('completed_date', today),
+    // All completions for streak
+    supabase.from('habit_completions').select('habit_id, completed_date')
+      .gte('completed_date', ninetyDaysAgo),
+    // Day cascade goals
+    supabase.from('cascade_goals').select('*')
+      .eq('time_horizon', 'day').eq('status', 'active')
+      .gte('deadline', today).lte('start_date', today),
+    // Week cascade goals
+    supabase.from('cascade_goals').select('*')
+      .eq('time_horizon', 'week').eq('status', 'active'),
+    // This week's weekly review (check if done)
+    supabase.from('journal_entries').select('id')
+      .eq('type', 'weekly_review')
+      .gte('date', weekStartStr).lte('date', weekEndStr).limit(1),
+    // This month's monthly review
+    supabase.from('journal_entries').select('id')
+      .eq('type', 'monthly_review')
+      .gte('date', monthStart).lte('date', monthEnd).limit(1),
+  ])
+
+  // Calculate streak
+  const allCompletions = (allCompletionsRes.data ?? []) as { habit_id: string; completed_date: string }[]
+  const dateSet = new Set(allCompletions.map(d => d.completed_date))
+  let streak = 0
   const cursor = new Date()
   cursor.setHours(0, 0, 0, 0)
-  if (!dateSet.has(todayStr)) {
-    cursor.setDate(cursor.getDate() - 1)
-  }
-
-  let streak = 0
+  if (!dateSet.has(today)) cursor.setDate(cursor.getDate() - 1)
   while (dateSet.has(toDateString(cursor))) {
     streak++
     cursor.setDate(cursor.getDate() - 1)
   }
 
-  return streak
-}
-
-// ---------------------------------------------------------------------------
-// Coach health: % of context modules with up-to-date snapshots
-// ---------------------------------------------------------------------------
-function calcCoachHealth(
-  modules: ContextModule[],
-  snapshots: ContextSnapshot[]
-): number {
-  if (modules.length === 0) return 100
-
-  const FREQ_DAYS: Record<string, number> = { monthly: 30, quarterly: 90, yearly: 365 }
-  const now = Date.now()
-  let upToDate = 0
-
-  for (const mod of modules) {
-    const snap = snapshots.find((s) => s.module_id === mod.id)
-    if (!snap) continue
-    const age = Math.floor((now - new Date(snap.created_at).getTime()) / (1000 * 60 * 60 * 24))
-    const maxAge = FREQ_DAYS[mod.update_frequency] ?? 30
-    if (age <= maxAge) upToDate++
-  }
-
-  return Math.round((upToDate / modules.length) * 100)
-}
-
-// ---------------------------------------------------------------------------
-// Data fetching
-// ---------------------------------------------------------------------------
-async function getDashboardData() {
-  const supabase = await createServerSupabaseClient()
-  const today = toDateString(new Date())
-
-  const [
-    userRes,
-    briefRes,
-    habitsRes,
-    completionsRes,
-    cascadeGoalsRes,
-    recentHabitCompletionsRes,
-    recentJournalsRes,
-    recentGoalLogsRes,
-    contextModulesRes,
-    contextSnapshotsRes,
-  ] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase
-      .from('journal_entries')
-      .select('*')
-      .eq('type', 'daily_brief')
-      .eq('date', today)
-      .order('created_at', { ascending: false })
-      .limit(1),
-    supabase.from('habits').select('*').eq('active', true),
-    supabase.from('habit_completions').select('*').eq('completed_date', today),
-    supabase
-      .from('cascade_goals')
-      .select('*')
-      .eq('status', 'active')
-      .in('time_horizon', ['quarter', 'month'])
-      .order('deadline', { ascending: true, nullsFirst: false }),
-    // Recent habit completions with habit title via join
-    supabase
-      .from('habit_completions')
-      .select('id, created_at, habit_id, habits(title)')
-      .order('created_at', { ascending: false })
-      .limit(5),
-    // Recent journal entries
-    supabase
-      .from('journal_entries')
-      .select('id, type, created_at')
-      .order('created_at', { ascending: false })
-      .limit(3),
-    // Recent goal progress logs with goal title
-    supabase
-      .from('goal_progress_log')
-      .select('id, logged_at, goal_id, goals(title)')
-      .order('logged_at', { ascending: false })
-      .limit(3),
-    // Context modules
-    supabase.from('context_modules').select('*').order('sort_order'),
-    // Latest context snapshot per module (get all, we'll pick latest per module)
-    supabase.from('context_snapshots').select('*').order('created_at', { ascending: false }),
-  ])
-
-  const streak = await calculateStreak(supabase)
-
-  const userId = userRes.data.user?.id ?? ''
+  // Week habit count
+  const weekCompletions = allCompletions.filter(c => c.completed_date >= weekStartStr && c.completed_date <= weekEndStr)
   const habits = (habitsRes.data ?? []) as Habit[]
-  const completions = (completionsRes.data ?? []) as HabitCompletion[]
-  const cascadeGoals = (cascadeGoalsRes.data ?? []) as CascadeGoal[]
+  const activeHabits = habits.filter(h => h.active)
+  // Approximate weekly target: daily habits * 7 + weekday habits * 5
+  const weeklyTarget = activeHabits.reduce((acc, h) => {
+    if (h.frequency === 'daily') return acc + 7
+    if (h.frequency === 'weekdays') return acc + 5
+    return acc + 1
+  }, 0)
+  const weekHabitsDone = weekCompletions.length
 
-  // Quarter goals for focus areas
-  const quarterGoals = cascadeGoals.filter((g) => g.time_horizon === 'quarter' || g.time_horizon === 'month')
+  // Overdue review check
+  const isSunday = now.getDay() === 0
+  const isLastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() === now.getDate()
+  const hasWeeklyReview = (weeklyReviewRes.data ?? []).length > 0
+  const hasMonthlyReview = (monthlyReviewRes.data ?? []).length > 0
 
-  // Brief
-  const briefEntry = briefRes.data?.[0]
-  const hasTodayBrief = !!briefEntry?.ai_response
-  const todayBrief = briefEntry?.ai_response ?? null
-  const todayBriefId = briefEntry?.id ?? null
+  // Check for OVERDUE reviews (past deadline but not done)
+  const lastWeekStart = new Date(weekStart)
+  lastWeekStart.setDate(lastWeekStart.getDate() - 7)
 
-  // Today's habits (daily + weekdays on weekdays)
-  const todayHabits = habits.filter((h) => {
-    if (h.frequency === 'daily') return true
-    if (h.frequency === 'weekdays') {
-      const day = new Date(today + 'T12:00:00').getDay()
-      return day >= 1 && day <= 5
+  let weeklyReviewOverdue = false
+  let weeklyOverdueDays = 0
+  if (!hasWeeklyReview) {
+    const { data: lastWeekReview } = await supabase.from('journal_entries').select('id')
+      .eq('type', 'weekly_review')
+      .gte('date', toDateString(lastWeekStart))
+      .lte('date', toDateString(new Date(weekStart.getTime() - 86400000))).limit(1)
+
+    if ((lastWeekReview ?? []).length === 0 && !isSunday) {
+      weeklyReviewOverdue = true
+      weeklyOverdueDays = dayOfWeek === 0 ? 0 : dayOfWeek
     }
-    return false
-  })
-  // Coach health
-  const modules = (contextModulesRes.data ?? []) as ContextModule[]
-  const allSnapshots = (contextSnapshotsRes.data ?? []) as ContextSnapshot[]
-  // Pick latest snapshot per module
-  const latestSnapshots: ContextSnapshot[] = []
-  const seenModules = new Set<string>()
-  for (const snap of allSnapshots) {
-    if (!seenModules.has(snap.module_id)) {
-      seenModules.add(snap.module_id)
-      latestSnapshots.push(snap)
+  }
+
+  const showWeeklyReview = isSunday || weeklyReviewOverdue
+
+  // Monthly review: show on last day of month or if overdue into next month
+  let monthlyReviewOverdue = false
+  let monthlyOverdueDays = 0
+  if (!hasMonthlyReview && now.getDate() <= 3 && now.getMonth() > 0) {
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0)
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const { data: lastMonthReview } = await supabase.from('journal_entries').select('id')
+      .eq('type', 'monthly_review')
+      .gte('date', toDateString(lastMonthStart))
+      .lte('date', toDateString(lastMonthEnd)).limit(1)
+    if ((lastMonthReview ?? []).length === 0) {
+      monthlyReviewOverdue = true
+      monthlyOverdueDays = now.getDate()
     }
   }
-  const coachHealthPct = calcCoachHealth(modules, latestSnapshots)
+  const showMonthlyReview = isLastDayOfMonth || monthlyReviewOverdue
 
-  // Activity feed
-  type ActivityItem = { id: string; text: string; created_at: string }
-  const activityItems: ActivityItem[] = []
+  const briefEntry = (briefRes.data ?? [])[0] as JournalEntry | undefined
 
-  // Habit completions
-  for (const hc of recentHabitCompletionsRes.data ?? []) {
-    const habitData = hc.habits as unknown as { title: string } | null
-    const title = habitData?.title ?? 'Ukjent vane'
-    activityItems.push({ id: hc.id, text: `Fullf\u00f8rte ${title}`, created_at: hc.created_at })
-  }
-
-  // Journal entries
-  const TYPE_LABELS: Record<string, string> = {
-    daily_brief: 'Daglig brief',
-    weekly_review: 'Ukentlig gjennomgang',
-    monthly_review: 'M\u00e5nedlig gjennomgang',
-    note: 'Notat',
-  }
-  for (const je of recentJournalsRes.data ?? []) {
-    const label = TYPE_LABELS[je.type] ?? je.type
-    activityItems.push({ id: je.id, text: `${label} skrevet`, created_at: je.created_at })
-  }
-
-  // Goal progress logs
-  for (const gp of recentGoalLogsRes.data ?? []) {
-    const goalData = gp.goals as unknown as { title: string } | null
-    const title = goalData?.title ?? 'Ukjent m\u00e5l'
-    activityItems.push({ id: gp.id, text: `Oppdaterte ${title}`, created_at: gp.logged_at })
-  }
-
-  // Sort by time desc, take top 5
-  activityItems.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  const activities = activityItems.slice(0, 5)
-
-  return {
-    userId,
-    today,
-    hasTodayBrief,
-    todayBrief,
-    todayBriefId,
-    habits,
-    completions,
-    totalTodayHabits: todayHabits.length,
-    streak,
-    quarterGoals,
-    coachHealthPct,
-    activities,
-  }
-}
-
-export default async function DashboardPage() {
-  const data = await getDashboardData()
-  return <SmartDashboard {...data} />
+  return (
+    <div className="px-4 py-6 md:px-8 max-w-2xl mx-auto">
+      <TodayClient
+        userId={userId}
+        today={today}
+        habits={habits}
+        completions={(completionsRes.data ?? []) as HabitCompletion[]}
+        dayGoals={(dayGoalsRes.data ?? []) as CascadeGoal[]}
+        weekGoals={(weekGoalsRes.data ?? []) as CascadeGoal[]}
+        streak={streak}
+        weekHabitsDone={weekHabitsDone}
+        weeklyTarget={weeklyTarget}
+        hasTodayBrief={!!briefEntry?.ai_response}
+        todayBrief={briefEntry?.ai_response ?? null}
+        todayBriefId={briefEntry?.id ?? null}
+        showWeeklyReview={showWeeklyReview && !hasWeeklyReview}
+        weeklyReviewOverdue={weeklyReviewOverdue}
+        weeklyOverdueDays={weeklyOverdueDays}
+        showMonthlyReview={showMonthlyReview && !hasMonthlyReview}
+        monthlyReviewOverdue={monthlyReviewOverdue}
+        monthlyOverdueDays={monthlyOverdueDays}
+        weekStartStr={weekStartStr}
+        weekEndStr={weekEndStr}
+      />
+    </div>
+  )
 }

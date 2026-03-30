@@ -68,7 +68,7 @@ export function QuickActions() {
       )}
 
       {/* FAB + Menu */}
-      <div className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 flex flex-col items-end gap-2">
+      <div className="fixed bottom-[132px] right-4 md:bottom-[72px] md:right-6 z-50 flex flex-col items-end gap-2">
         {/* Action buttons */}
         {menuOpen && ACTIONS.map((action, i) => (
           <button

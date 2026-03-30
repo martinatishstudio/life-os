@@ -219,3 +219,11 @@ export interface CascadeGoalProgress {
   note?: string
   logged_at: string
 }
+
+export interface CoachMessage {
+  id: string
+  user_id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}

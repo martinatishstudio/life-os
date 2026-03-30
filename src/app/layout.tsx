@@ -3,6 +3,7 @@ import './globals.css'
 import { Sidebar } from '@/components/ui/Sidebar'
 import { ToastProvider } from '@/components/ui/Toast'
 import { QuickActions } from '@/components/ui/QuickActions'
+import { CoachChat } from '@/components/chat/CoachChat'
 
 export const metadata: Metadata = {
   title: 'Life OS',
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {children}
           </main>
           <QuickActions />
+          <CoachChat />
         </ToastProvider>
       </body>
     </html>

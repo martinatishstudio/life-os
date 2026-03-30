@@ -5,15 +5,9 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 const navItems = [
-  { href: '/', label: 'Oversikt', icon: '◎', mobile: true },
-  { href: '/chat', label: 'Coach', icon: '◆', mobile: true },
-  { href: '/vision', label: 'Visjon', icon: '◈', mobile: false },
-  { href: '/goals', label: 'Mål', icon: '◉', mobile: true },
-  { href: '/daily', label: 'Daglig', icon: '◐', mobile: true },
-  { href: '/finance', label: 'Økonomi', icon: '◑', mobile: false },
-  { href: '/trends', label: 'Trender', icon: '◓', mobile: false },
-  { href: '/review', label: 'Review', icon: '◒', mobile: true },
-  { href: '/settings', label: 'Innstillinger', icon: '⚙', mobile: false },
+  { href: '/', label: 'I dag', icon: '◎', mobile: true },
+  { href: '/map', label: 'Kart', icon: '◈', mobile: true },
+  { href: '/me', label: 'Meg', icon: '◑', mobile: true },
 ]
 
 export function Sidebar() {
@@ -71,9 +65,9 @@ export function Sidebar() {
         </div>
       </aside>
 
-      {/* Mobile bottom nav — only show key items */}
+      {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex border-t border-white/10" style={{ backgroundColor: '#0c3230' }}>
-        {navItems.filter(item => item.mobile).map((item) => {
+        {navItems.map((item) => {
           const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
           return (
             <Link
