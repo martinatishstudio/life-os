@@ -512,6 +512,7 @@ export function TodayClient(props: TodayClientProps) {
   const [activeTab, setActiveTab] = useState<TimeTab>('morning')
   const [newGoalText, setNewGoalText] = useState('')
   const [reviewMode, setReviewMode] = useState<'weekly' | 'monthly' | null>(null)
+  const [briefExpanded, setBriefExpanded] = useState(false)
   const briefGenerated = useRef(false)
 
   // Filter habits for today
@@ -702,97 +703,58 @@ export function TodayClient(props: TodayClientProps) {
   }
 
   // ---------------------------------------------------------------------------
+  // Brief preview: first 2 lines of plain text
+  // ---------------------------------------------------------------------------
+  const briefPreview = brief
+    ? brief.split('\n').filter(l => l.trim().length > 0 && !l.trim().startsWith('#')).slice(0, 2).join(' ').replace(/\*\*/g, '').slice(0, 120)
+    : null
+
+  // Habit progress percentage
+  const habitPct = totalHabits > 0 ? Math.round((totalDone / totalHabits) * 100) : 0
+
+  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
   return (
-    <div className="space-y-6">
-      {/* 1. HEADER */}
+    <div className="space-y-5">
+      {/* 1. HEADER + COMPACT STATS */}
       <header>
         <h1 className="text-lg font-semibold text-[#0c3230]">{getGreeting()}</h1>
-        <p className="text-sm text-[#0c3230]/60">{formatNorwegianFullDate(new Date())}</p>
+        <p className="text-sm text-[#0c3230]/60 mb-3">{formatNorwegianFullDate(new Date())}</p>
+
+        {/* Stats row */}
+        <div className="flex gap-2">
+          <div className="flex-1 rounded-xl bg-[#f7f9f7] px-3 py-2.5 text-center">
+            <p className="text-lg font-bold text-[#0c3230]">{streak}</p>
+            <p className="text-[10px] text-[#0c3230]/50 uppercase tracking-wide">Streak</p>
+          </div>
+          <div className="flex-1 rounded-xl bg-[#f7f9f7] px-3 py-2.5 text-center">
+            <p className="text-lg font-bold text-[#0c3230]">{totalDone}/{totalHabits}</p>
+            <p className="text-[10px] text-[#0c3230]/50 uppercase tracking-wide">I dag</p>
+          </div>
+          <div className="flex-1 rounded-xl bg-[#f7f9f7] px-3 py-2.5 text-center">
+            <p className="text-lg font-bold text-[#0c3230]">{weekHabitsDone}/{weeklyTarget}</p>
+            <p className="text-[10px] text-[#0c3230]/50 uppercase tracking-wide">Uke</p>
+          </div>
+        </div>
       </header>
 
-      {/* 2. MORNING BRIEF */}
-      <section className="rounded-xl bg-[#f7f9f7] p-4">
+      {/* 2. TODAY'S HABITS — actionable, first */}
+      <section>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-[#0c3230]/50">
-            Daglig brief
+            Vaner
           </h2>
-          <button
-            onClick={generateBrief}
-            disabled={briefLoading}
-            className="text-xs text-[#3dbfb5] hover:underline disabled:opacity-50"
-          >
-            Oppdater
-          </button>
+          <span className="text-xs text-[#0c3230]/40">{habitPct}%</span>
         </div>
-        {briefLoading ? (
-          <LoadingDots />
-        ) : brief ? (
+
+        {/* Progress bar */}
+        <div className="h-1.5 bg-[#0c3230]/10 rounded-full overflow-hidden mb-3">
           <div
-            className="text-[#0c3230]/80 fade-in"
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(brief) }}
+            className="h-full bg-[#b8f04a] rounded-full transition-all duration-300"
+            style={{ width: `${habitPct}%` }}
           />
-        ) : (
-          <p className="text-sm text-[#0c3230]/40">Ingen brief ennå.</p>
-        )}
-      </section>
-
-      {/* 3. OVERDUE REVIEW */}
-      {reviewMode ? (
-        <ReviewFlow
-          type={reviewMode}
-          userId={userId}
-          weekStartStr={weekStartStr}
-          weekEndStr={weekEndStr}
-          onClose={() => { setReviewMode(null); router.refresh() }}
-        />
-      ) : (
-        <>
-          {showWeeklyReview && (
-            <section className="rounded-xl border p-4 space-y-2"
-              style={{ borderColor: weeklyReviewOverdue ? '#ef4444' : '#eab308' }}
-            >
-              <p className={`text-sm font-semibold ${weeklyReviewOverdue ? 'text-red-600' : 'text-yellow-600'}`}>
-                {weeklyReviewOverdue
-                  ? `Forfalt: Ukentlig review (${weeklyOverdueDays} dager siden)`
-                  : 'Ukentlig review klart'
-                }
-              </p>
-              <button
-                onClick={() => setReviewMode('weekly')}
-                className="text-xs font-semibold text-[#3dbfb5] hover:underline"
-              >
-                Start review
-              </button>
-            </section>
-          )}
-          {showMonthlyReview && (
-            <section className="rounded-xl border p-4 space-y-2"
-              style={{ borderColor: monthlyReviewOverdue ? '#ef4444' : '#eab308' }}
-            >
-              <p className={`text-sm font-semibold ${monthlyReviewOverdue ? 'text-red-600' : 'text-yellow-600'}`}>
-                {monthlyReviewOverdue
-                  ? `Forfalt: Manedlig review (${monthlyOverdueDays} dager siden)`
-                  : 'Manedlig review klart'
-                }
-              </p>
-              <button
-                onClick={() => setReviewMode('monthly')}
-                className="text-xs font-semibold text-[#3dbfb5] hover:underline"
-              >
-                Start review
-              </button>
-            </section>
-          )}
-        </>
-      )}
-
-      {/* 4. TODAY'S HABITS */}
-      <section>
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-[#0c3230]/50 mb-2">
-          Vaner
-        </h2>
+        </div>
 
         {/* Tabs */}
         <div className="flex gap-1 mb-3">
@@ -843,23 +805,9 @@ export function TodayClient(props: TodayClientProps) {
             })
           )}
         </div>
-
-        {/* Progress bar */}
-        <div className="mt-3">
-          <div className="flex items-center justify-between text-xs text-[#0c3230]/50 mb-1">
-            <span>{totalDone} av {totalHabits} gjort</span>
-            <span>{totalHabits > 0 ? Math.round((totalDone / totalHabits) * 100) : 0}%</span>
-          </div>
-          <div className="h-1.5 bg-[#0c3230]/10 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-[#b8f04a] rounded-full transition-all duration-300"
-              style={{ width: `${totalHabits > 0 ? (totalDone / totalHabits) * 100 : 0}%` }}
-            />
-          </div>
-        </div>
       </section>
 
-      {/* 5. TODAY'S PRIORITIES (Day goals) */}
+      {/* 3. TODAY'S PRIORITIES (Day goals) */}
       <section>
         <h2 className="text-xs font-semibold uppercase tracking-wide text-[#0c3230]/50 mb-2">
           Dagens mål
@@ -907,7 +855,69 @@ export function TodayClient(props: TodayClientProps) {
         </div>
       </section>
 
-      {/* 6. WEEK GOALS (compact) */}
+      {/* 4. DAILY BRIEF — collapsible */}
+      <section
+        className="rounded-xl bg-[#f7f9f7] overflow-hidden transition-all"
+      >
+        <button
+          onClick={() => setBriefExpanded(!briefExpanded)}
+          className="w-full flex items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#0c3230' }}>
+              <span className="text-[10px]" style={{ color: '#b8f04a' }}>◎</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xs font-semibold text-[#0c3230]/70">Daglig brief</h2>
+              {!briefExpanded && briefPreview && !briefLoading && (
+                <p className="text-xs text-[#0c3230]/40 truncate mt-0.5">{briefPreview}...</p>
+              )}
+              {!briefExpanded && briefLoading && (
+                <p className="text-xs text-[#0c3230]/40 mt-0.5">Genererer...</p>
+              )}
+            </div>
+          </div>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`text-[#0c3230]/30 flex-shrink-0 transition-transform ${briefExpanded ? 'rotate-180' : ''}`}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+
+        {briefExpanded && (
+          <div className="px-4 pb-4 fade-in">
+            <div className="flex items-center justify-end mb-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); generateBrief() }}
+                disabled={briefLoading}
+                className="text-xs text-[#3dbfb5] hover:underline disabled:opacity-50"
+              >
+                Oppdater
+              </button>
+            </div>
+            {briefLoading ? (
+              <LoadingDots />
+            ) : brief ? (
+              <div
+                className="text-[#0c3230]/80"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(brief) }}
+              />
+            ) : (
+              <p className="text-sm text-[#0c3230]/40">Ingen brief ennå.</p>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* 5. WEEK GOALS (compact) */}
       {weekGoals.length > 0 && (
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-wide text-[#0c3230]/50 mb-2">
@@ -949,11 +959,58 @@ export function TodayClient(props: TodayClientProps) {
         </section>
       )}
 
-      {/* 7. STREAK & STATUS */}
-      <footer className="flex items-center justify-between text-xs text-[#0c3230]/50 pt-2 border-t border-[#0c3230]/5">
-        <span>Streak: {streak} dager</span>
-        <span>Denne uken: {weekHabitsDone}/{weeklyTarget} habits</span>
-      </footer>
+      {/* 6. OVERDUE REVIEWS — at bottom, less disruptive */}
+      {reviewMode ? (
+        <ReviewFlow
+          type={reviewMode}
+          userId={userId}
+          weekStartStr={weekStartStr}
+          weekEndStr={weekEndStr}
+          onClose={() => { setReviewMode(null); router.refresh() }}
+        />
+      ) : (
+        <>
+          {showWeeklyReview && (
+            <section className="rounded-xl border p-3 flex items-center justify-between"
+              style={{ borderColor: weeklyReviewOverdue ? '#ef4444' : '#eab308' }}
+            >
+              <p className={`text-sm font-medium ${weeklyReviewOverdue ? 'text-red-600' : 'text-yellow-600'}`}>
+                {weeklyReviewOverdue
+                  ? `Ukentlig review forfalt (${weeklyOverdueDays}d)`
+                  : 'Ukentlig review klart'
+                }
+              </p>
+              <button
+                onClick={() => setReviewMode('weekly')}
+                className="text-xs font-semibold text-[#3dbfb5] hover:underline ml-3 flex-shrink-0"
+              >
+                Start
+              </button>
+            </section>
+          )}
+          {showMonthlyReview && (
+            <section className="rounded-xl border p-3 flex items-center justify-between"
+              style={{ borderColor: monthlyReviewOverdue ? '#ef4444' : '#eab308' }}
+            >
+              <p className={`text-sm font-medium ${monthlyReviewOverdue ? 'text-red-600' : 'text-yellow-600'}`}>
+                {monthlyReviewOverdue
+                  ? `Månedlig review forfalt (${monthlyOverdueDays}d)`
+                  : 'Månedlig review klart'
+                }
+              </p>
+              <button
+                onClick={() => setReviewMode('monthly')}
+                className="text-xs font-semibold text-[#3dbfb5] hover:underline ml-3 flex-shrink-0"
+              >
+                Start
+              </button>
+            </section>
+          )}
+        </>
+      )}
+
+      {/* Bottom padding for mobile nav */}
+      <div className="h-4" />
 
       {/* Fade-in animation */}
       <style jsx global>{`
