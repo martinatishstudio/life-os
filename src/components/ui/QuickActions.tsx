@@ -40,7 +40,7 @@ export function QuickActions() {
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => {
-      setUserId(data.user?.id ?? null)
+      setUserId(data.user?.id ?? '89b04d8f-09a6-4fe7-9efe-5d0843d63519')
     })
   }, [])
 

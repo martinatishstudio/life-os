@@ -86,11 +86,11 @@ export function CoachChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // Get user on mount
+  // Get user on mount — fallback to hardcoded ID for single-user app
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => {
-      setUserId(data.user?.id ?? null)
+      setUserId(data.user?.id ?? '89b04d8f-09a6-4fe7-9efe-5d0843d63519')
     })
   }, [])
 
@@ -102,10 +102,10 @@ export function CoachChat() {
       .from('coach_messages')
       .select('*')
       .eq('user_id', userId)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(20)
       .then(({ data }) => {
-        if (data) setMessages(data as CoachMessage[])
+        if (data) setMessages((data as CoachMessage[]).reverse())
         setInitialLoaded(true)
       })
   }, [open, userId, initialLoaded])
