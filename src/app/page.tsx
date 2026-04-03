@@ -55,6 +55,7 @@ export default async function TodayPage() {
     completionsRes,
     allCompletionsRes,
     dayGoalsRes,
+    weekGoalsRes,
     weeklyReviewRes,
     monthlyReviewRes,
     rewardsRes,
@@ -71,10 +72,13 @@ export default async function TodayPage() {
     // All completions for streak
     supabase.from('habit_completions').select('habit_id, completed_date')
       .gte('completed_date', ninetyDaysAgo),
-    // Day cascade goals
+    // Day cascade goals (active for today, or created today)
     supabase.from('cascade_goals').select('*')
-      .eq('time_horizon', 'day').eq('status', 'active')
-      .gte('deadline', today).lte('start_date', today),
+      .eq('time_horizon', 'day').in('status', ['active', 'completed'])
+      .or(`deadline.gte.${today},deadline.is.null,created_at.gte.${today}T00:00:00`),
+    // Week cascade goals
+    supabase.from('cascade_goals').select('*')
+      .eq('time_horizon', 'week').eq('status', 'active'),
     // This week's weekly review (check if done)
     supabase.from('journal_entries').select('id')
       .eq('type', 'weekly_review')
@@ -168,6 +172,7 @@ export default async function TodayPage() {
         habits={habits}
         completions={(completionsRes.data ?? []) as HabitCompletion[]}
         dayGoals={(dayGoalsRes.data ?? []) as CascadeGoal[]}
+        weekGoals={(weekGoalsRes.data ?? []) as CascadeGoal[]}
         streak={streak}
         weekHabitsDone={weekHabitsDone}
         weeklyTarget={weeklyTarget}
