@@ -9,13 +9,33 @@ import { CATEGORIES, CATEGORY_MAP } from '@/types'
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
+interface TodayReward {
+  id: string
+  title: string
+  goal_id: string
+  cascade_goals: {
+    id: string
+    title: string
+    current_value: number
+    target_value: number | null
+    unit: string | null
+    category: string
+  } | null
+}
+
+interface WeekEntry {
+  category: string
+  entry_type: string
+  value: number | null
+  unit: string | null
+}
+
 interface TodayClientProps {
   userId: string
   today: string
   habits: Habit[]
   completions: HabitCompletion[]
   dayGoals: CascadeGoal[]
-  weekGoals: CascadeGoal[]
   streak: number
   weekHabitsDone: number
   weeklyTarget: number
@@ -30,6 +50,8 @@ interface TodayClientProps {
   monthlyOverdueDays: number
   weekStartStr: string
   weekEndStr: string
+  rewards: TodayReward[]
+  weekEntries: WeekEntry[]
 }
 
 // ---------------------------------------------------------------------------
@@ -87,27 +109,6 @@ function applyInline(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// On-track status for week goals
-// ---------------------------------------------------------------------------
-function getOnTrackStatus(goal: CascadeGoal): 'green' | 'yellow' | 'red' {
-  if (!goal.target_value || goal.target_value === 0) return 'green'
-  const pct = (goal.current_value / goal.target_value) * 100
-  const start = goal.start_date ? new Date(goal.start_date) : new Date(goal.created_at)
-  const end = goal.deadline ? new Date(goal.deadline) : new Date(start.getTime() + 7 * 86400000)
-  const elapsed = (Date.now() - start.getTime()) / (end.getTime() - start.getTime())
-  const expected = elapsed * 100
-  if (pct >= expected) return 'green'
-  if (pct >= expected * 0.8) return 'yellow'
-  return 'red'
-}
-
-const STATUS_DOT: Record<string, string> = {
-  green: 'bg-emerald-400',
-  yellow: 'bg-yellow-400',
-  red: 'bg-red-400',
-}
-
-// ---------------------------------------------------------------------------
 // Norwegian date helpers
 // ---------------------------------------------------------------------------
 const NB_DAYS = ['sondag', 'mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lordag']
@@ -126,16 +127,6 @@ function getGreeting(): string {
   if (h < 12) return 'God morgen, Martin'
   if (h < 17) return 'God ettermiddag, Martin'
   return 'God kveld, Martin'
-}
-
-// ---------------------------------------------------------------------------
-// Habit section tabs
-// ---------------------------------------------------------------------------
-type TimeTab = 'morning' | 'anytime' | 'evening'
-const TAB_LABELS: Record<TimeTab, string> = {
-  morning: 'Morgen',
-  anytime: 'Dag',
-  evening: 'Kveld',
 }
 
 // ---------------------------------------------------------------------------
@@ -492,12 +483,13 @@ function LoadingDots() {
 export function TodayClient(props: TodayClientProps) {
   const {
     userId, today, habits, completions: initialCompletions,
-    dayGoals: initialDayGoals, weekGoals,
+    dayGoals: initialDayGoals,
     streak, weekHabitsDone, weeklyTarget,
     hasTodayBrief, todayBrief: initialBrief, todayBriefId,
     showWeeklyReview, weeklyReviewOverdue, weeklyOverdueDays,
     showMonthlyReview, monthlyReviewOverdue, monthlyOverdueDays,
     weekStartStr, weekEndStr,
+    rewards, weekEntries,
   } = props
 
   const router = useRouter()
@@ -509,13 +501,11 @@ export function TodayClient(props: TodayClientProps) {
   const [brief, setBrief] = useState<string | null>(initialBrief)
   const [briefLoading, setBriefLoading] = useState(false)
   const [briefId, setBriefId] = useState<string | null>(todayBriefId)
-  const [activeTab, setActiveTab] = useState<TimeTab>('morning')
   const [newGoalText, setNewGoalText] = useState('')
   const [reviewMode, setReviewMode] = useState<'weekly' | 'monthly' | null>(null)
-  const [briefExpanded, setBriefExpanded] = useState(false)
   const briefGenerated = useRef(false)
 
-  // Filter habits for today
+  // Filter habits for today — flat list, no tabs
   const todayHabits = habits.filter(h => {
     if (h.frequency === 'daily') return true
     if (h.frequency === 'weekdays') {
@@ -525,15 +515,29 @@ export function TodayClient(props: TodayClientProps) {
     return false
   })
 
-  const habitsByTime: Record<TimeTab, Habit[]> = {
-    morning: todayHabits.filter(h => h.time_of_day === 'morning'),
-    anytime: todayHabits.filter(h => !h.time_of_day || h.time_of_day === 'anytime'),
-    evening: todayHabits.filter(h => h.time_of_day === 'evening'),
-  }
-
   const completedIds = new Set(completions.map(c => c.habit_id))
   const totalDone = todayHabits.filter(h => completedIds.has(h.id)).length
-  const totalHabits = todayHabits.length
+  const dayGoalsDone = dayGoals.filter(g => g.status === 'completed').length
+  const totalItems = todayHabits.length + dayGoals.length
+  const totalItemsDone = totalDone + dayGoalsDone
+
+  // Reward near unlock: find first reward where goal >= 75%
+  const nearReward = rewards.find(r => {
+    const g = r.cascade_goals
+    if (!g || !g.target_value || g.target_value === 0) return false
+    return (g.current_value / g.target_value) >= 0.75
+  })
+
+  // Week summary from weekEntries
+  const weekWorkouts = weekEntries.filter(e => e.entry_type === 'workout').length
+  const weekSpent = Math.round(Math.abs(
+    weekEntries.filter(e => e.entry_type === 'expense' && e.value).reduce((s, e) => s + (e.value ?? 0), 0)
+  ))
+
+  function formatKr(n: number): string {
+    if (n >= 1000) return `${Math.round(n / 1000)}K`
+    return String(n)
+  }
 
   // Auto-generate brief on mount
   useEffect(() => {
@@ -703,263 +707,40 @@ export function TodayClient(props: TodayClientProps) {
   }
 
   // ---------------------------------------------------------------------------
-  // Brief preview: first 2 lines of plain text
-  // ---------------------------------------------------------------------------
-  const briefPreview = brief
-    ? brief.split('\n').filter(l => l.trim().length > 0 && !l.trim().startsWith('#')).slice(0, 2).join(' ').replace(/\*\*/g, '').slice(0, 120)
-    : null
-
-  // Habit progress percentage
-  const habitPct = totalHabits > 0 ? Math.round((totalDone / totalHabits) * 100) : 0
-
-  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
   return (
     <div className="space-y-5">
-      {/* 1. HEADER + COMPACT STATS */}
-      <header>
-        <h1 className="text-lg font-semibold text-[#0c3230]">{getGreeting()}</h1>
-        <p className="text-sm text-[#0c3230]/60 mb-3">{formatNorwegianFullDate(new Date())}</p>
-
-        {/* Stats row */}
-        <div className="flex gap-2">
-          <div className="flex-1 rounded-xl bg-[#f7f9f7] px-3 py-2.5 text-center">
-            <p className="text-lg font-bold text-[#0c3230]">{streak}</p>
-            <p className="text-[10px] text-[#0c3230]/50 uppercase tracking-wide">Streak</p>
-          </div>
-          <div className="flex-1 rounded-xl bg-[#f7f9f7] px-3 py-2.5 text-center">
-            <p className="text-lg font-bold text-[#0c3230]">{totalDone}/{totalHabits}</p>
-            <p className="text-[10px] text-[#0c3230]/50 uppercase tracking-wide">I dag</p>
-          </div>
-          <div className="flex-1 rounded-xl bg-[#f7f9f7] px-3 py-2.5 text-center">
-            <p className="text-lg font-bold text-[#0c3230]">{weekHabitsDone}/{weeklyTarget}</p>
-            <p className="text-[10px] text-[#0c3230]/50 uppercase tracking-wide">Uke</p>
-          </div>
-        </div>
-      </header>
-
-      {/* 2. TODAY'S HABITS — actionable, first */}
+      {/* 1. BRIEF — compact, 2-3 lines */}
       <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-[#0c3230]/50">
-            Vaner
-          </h2>
-          <span className="text-xs text-[#0c3230]/40">{habitPct}%</span>
-        </div>
-
-        {/* Progress bar */}
-        <div className="h-1.5 bg-[#0c3230]/10 rounded-full overflow-hidden mb-3">
-          <div
-            className="h-full bg-[#b8f04a] rounded-full transition-all duration-300"
-            style={{ width: `${habitPct}%` }}
-          />
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 mb-3">
-          {(['morning', 'anytime', 'evening'] as TimeTab[]).map(tab => {
-            const count = habitsByTime[tab].length
-            const doneCount = habitsByTime[tab].filter(h => completedIds.has(h.id)).length
-            return (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
-                  activeTab === tab
-                    ? 'bg-[#0c3230] text-white'
-                    : 'bg-[#0c3230]/5 text-[#0c3230]/60 hover:bg-[#0c3230]/10'
-                }`}
-              >
-                {TAB_LABELS[tab]} {count > 0 && `${doneCount}/${count}`}
-              </button>
-            )
-          })}
-        </div>
-
-        {/* Habit list */}
-        <div className="space-y-1">
-          {habitsByTime[activeTab].length === 0 ? (
-            <p className="text-xs text-[#0c3230]/40 py-2">Ingen vaner i denne kategorien.</p>
-          ) : (
-            habitsByTime[activeTab].map(habit => {
-              const done = completedIds.has(habit.id)
-              return (
-                <label
-                  key={habit.id}
-                  className="flex items-center gap-2.5 py-1.5 cursor-pointer group"
-                >
-                  <input
-                    type="checkbox"
-                    checked={done}
-                    onChange={() => toggleHabit(habit.id)}
-                    className="w-4 h-4 rounded border-[#0c3230]/20 accent-[#b8f04a] cursor-pointer"
-                  />
-                  <span className={`text-sm transition-colors ${
-                    done ? 'text-[#0c3230]/40 line-through' : 'text-[#0c3230]'
-                  }`}>
-                    {habit.title}
-                  </span>
-                </label>
-              )
-            })
-          )}
-        </div>
-      </section>
-
-      {/* 3. TODAY'S PRIORITIES (Day goals) */}
-      <section>
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-[#0c3230]/50 mb-2">
-          Dagens mål
-        </h2>
-
-        {dayGoals.length === 0 && !newGoalText ? (
-          <p className="text-sm text-[#0c3230]/40 mb-2">Ingen dagsmål satt.</p>
-        ) : (
-          <div className="space-y-1 mb-2">
-            {dayGoals.map(goal => {
-              const done = goal.status === 'completed'
-              return (
-                <label
-                  key={goal.id}
-                  className="flex items-center gap-2.5 py-1.5 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={done}
-                    onChange={() => toggleDayGoal(goal.id)}
-                    className="w-4 h-4 rounded border-[#0c3230]/20 accent-[#b8f04a] cursor-pointer"
-                  />
-                  <span className={`text-sm transition-colors ${
-                    done ? 'text-[#0c3230]/40 line-through' : 'text-[#0c3230]'
-                  }`}>
-                    {goal.title}
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-        )}
-
-        {/* Add new goal */}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={newGoalText}
-            onChange={e => setNewGoalText(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addDayGoal()}
-            placeholder="Legg til dagsmål..."
-            className="flex-1 text-sm px-3 py-1.5 rounded-lg border border-[#0c3230]/10 bg-white
-                       text-[#0c3230] placeholder:text-[#0c3230]/30 focus:outline-none focus:border-[#3dbfb5]"
-          />
-        </div>
-      </section>
-
-      {/* 4. DAILY BRIEF — collapsible */}
-      <section
-        className="rounded-xl bg-[#f7f9f7] overflow-hidden transition-all"
-      >
-        <button
-          onClick={() => setBriefExpanded(!briefExpanded)}
-          className="w-full flex items-center justify-between px-4 py-3 text-left"
-        >
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#0c3230' }}>
-              <span className="text-[10px]" style={{ color: '#b8f04a' }}>◎</span>
-            </div>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-xs font-semibold text-[#0c3230]/70">Daglig brief</h2>
-              {!briefExpanded && briefPreview && !briefLoading && (
-                <p className="text-xs text-[#0c3230]/40 truncate mt-0.5">{briefPreview}...</p>
-              )}
-              {!briefExpanded && briefLoading && (
-                <p className="text-xs text-[#0c3230]/40 mt-0.5">Genererer...</p>
-              )}
-            </div>
-          </div>
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={`text-[#0c3230]/30 flex-shrink-0 transition-transform ${briefExpanded ? 'rotate-180' : ''}`}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-
-        {briefExpanded && (
-          <div className="px-4 pb-4 fade-in">
-            <div className="flex items-center justify-end mb-2">
-              <button
-                onClick={(e) => { e.stopPropagation(); generateBrief() }}
-                disabled={briefLoading}
-                className="text-xs text-[#3dbfb5] hover:underline disabled:opacity-50"
-              >
-                Oppdater
-              </button>
-            </div>
+        <div className="flex items-start justify-between">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold text-[#0c3230]">{getGreeting()}</h1>
             {briefLoading ? (
               <LoadingDots />
             ) : brief ? (
-              <div
-                className="text-[#0c3230]/80"
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(brief) }}
-              />
+              <p className="text-sm text-[#0c3230]/70 mt-1 line-clamp-3">
+                {brief.split('\n').filter(l => l.trim().length > 0 && !l.trim().startsWith('#')).slice(0, 3).join(' ').replace(/\*\*/g, '').slice(0, 200)}
+              </p>
             ) : (
-              <p className="text-sm text-[#0c3230]/40">Ingen brief ennå.</p>
+              <p className="text-sm text-[#0c3230]/40 mt-1">Genererer brief...</p>
             )}
           </div>
-        )}
+          <button
+            onClick={generateBrief}
+            disabled={briefLoading}
+            className="ml-3 mt-1 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[#0c3230]/5 transition-colors disabled:opacity-30 flex-shrink-0"
+            aria-label="Oppdater brief"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0c3230" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={briefLoading ? 'animate-spin' : ''}>
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+          </button>
+        </div>
       </section>
 
-      {/* 5. WEEK GOALS (compact) */}
-      {weekGoals.length > 0 && (
-        <section>
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-[#0c3230]/50 mb-2">
-            Ukemål
-          </h2>
-          <div className="space-y-2">
-            {weekGoals.map(goal => {
-              const status = getOnTrackStatus(goal)
-              const pct = goal.target_value
-                ? Math.min(100, Math.round((goal.current_value / goal.target_value) * 100))
-                : 0
-              return (
-                <button
-                  key={goal.id}
-                  onClick={() => { window.location.href = `/map?focus=${goal.id}` }}
-                  className="w-full text-left flex items-center gap-3 py-1.5 group hover:bg-[#0c3230]/5 rounded-lg px-2 -mx-2 transition-colors"
-                >
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[#0c3230] truncate">{goal.title}</p>
-                    {goal.target_value != null && goal.target_value > 0 && (
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <div className="flex-1 h-1 bg-[#0c3230]/10 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-[#b8f04a] rounded-full"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <span className="text-[10px] text-[#0c3230]/50 flex-shrink-0">
-                          {goal.current_value}/{goal.target_value} {goal.unit ?? ''}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* 6. OVERDUE REVIEWS — at bottom, less disruptive */}
+      {/* 2. FORFALT REVIEW (only if relevant) */}
       {reviewMode ? (
         <ReviewFlow
           type={reviewMode}
@@ -971,7 +752,7 @@ export function TodayClient(props: TodayClientProps) {
       ) : (
         <>
           {showWeeklyReview && (
-            <section className="rounded-xl border p-3 flex items-center justify-between"
+            <section className="rounded-xl border-l-4 p-3 flex items-center justify-between bg-red-50/50"
               style={{ borderColor: weeklyReviewOverdue ? '#ef4444' : '#eab308' }}
             >
               <p className={`text-sm font-medium ${weeklyReviewOverdue ? 'text-red-600' : 'text-yellow-600'}`}>
@@ -989,7 +770,7 @@ export function TodayClient(props: TodayClientProps) {
             </section>
           )}
           {showMonthlyReview && (
-            <section className="rounded-xl border p-3 flex items-center justify-between"
+            <section className="rounded-xl border-l-4 p-3 flex items-center justify-between bg-red-50/50"
               style={{ borderColor: monthlyReviewOverdue ? '#ef4444' : '#eab308' }}
             >
               <p className={`text-sm font-medium ${monthlyReviewOverdue ? 'text-red-600' : 'text-yellow-600'}`}>
@@ -1008,6 +789,127 @@ export function TodayClient(props: TodayClientProps) {
           )}
         </>
       )}
+
+      {/* 3. I DAG — unified checklist */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-[#0c3230]">I dag</h2>
+          <span className="text-xs text-[#0c3230]/40">{formatNorwegianFullDate(new Date())}</span>
+        </div>
+
+        <div className="space-y-0.5">
+          {/* Habits */}
+          {todayHabits.map(habit => {
+            const done = completedIds.has(habit.id)
+            const catInfo = CATEGORY_MAP[habit.category as Category]
+            return (
+              <label
+                key={`h-${habit.id}`}
+                className="flex items-center gap-2.5 py-2 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={done}
+                  onChange={() => toggleHabit(habit.id)}
+                  className="w-4 h-4 rounded border-[#0c3230]/20 accent-[#b8f04a] cursor-pointer"
+                />
+                <span className={`flex-1 text-sm transition-colors ${
+                  done ? 'text-[#0c3230]/40 line-through' : 'text-[#0c3230]'
+                }`}>
+                  {habit.title}
+                </span>
+                {catInfo && (
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${catInfo.bg.replace('bg-', 'bg-')}`}
+                    style={{ backgroundColor: catInfo.color.includes('teal') ? '#0d9488' : catInfo.color.includes('blue') ? '#1d4ed8' : catInfo.color.includes('purple') ? '#7c3aed' : catInfo.color.includes('amber') ? '#d97706' : catInfo.color.includes('pink') ? '#db2777' : catInfo.color.includes('orange') ? '#ea580c' : catInfo.color.includes('indigo') ? '#4f46e5' : '#6b7280' }}
+                  />
+                )}
+              </label>
+            )
+          })}
+
+          {/* Day goals */}
+          {dayGoals.map(goal => {
+            const done = goal.status === 'completed'
+            const catInfo = CATEGORY_MAP[goal.category as Category]
+            return (
+              <label
+                key={`g-${goal.id}`}
+                className="flex items-center gap-2.5 py-2 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={done}
+                  onChange={() => toggleDayGoal(goal.id)}
+                  className="w-4 h-4 rounded border-[#0c3230]/20 accent-[#b8f04a] cursor-pointer"
+                />
+                <span className={`flex-1 text-sm transition-colors ${
+                  done ? 'text-[#0c3230]/40 line-through' : 'text-[#0c3230]'
+                }`}>
+                  {goal.title}
+                </span>
+                {catInfo && (
+                  <div className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: catInfo.color.includes('teal') ? '#0d9488' : catInfo.color.includes('blue') ? '#1d4ed8' : catInfo.color.includes('purple') ? '#7c3aed' : catInfo.color.includes('amber') ? '#d97706' : catInfo.color.includes('pink') ? '#db2777' : catInfo.color.includes('orange') ? '#ea580c' : catInfo.color.includes('indigo') ? '#4f46e5' : '#6b7280' }}
+                  />
+                )}
+              </label>
+            )
+          })}
+
+          {todayHabits.length === 0 && dayGoals.length === 0 && (
+            <p className="text-sm text-[#0c3230]/40 py-2">Ingen oppgaver i dag.</p>
+          )}
+        </div>
+
+        {/* Counter */}
+        <p className="text-xs text-[#0c3230]/40 mt-2">
+          {totalItemsDone} av {totalItems} gjort
+        </p>
+
+        {/* Add new goal */}
+        <div className="mt-3">
+          <input
+            type="text"
+            value={newGoalText}
+            onChange={e => setNewGoalText(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addDayGoal()}
+            placeholder="Legg til oppgave..."
+            className="w-full text-sm px-3 py-2 rounded-lg border border-[#0c3230]/10 bg-white
+                       text-[#0c3230] placeholder:text-[#0c3230]/30 focus:outline-none focus:border-[#3dbfb5]"
+          />
+        </div>
+      </section>
+
+      {/* 4. BELØNNING (if any goal >= 75%) */}
+      {nearReward && nearReward.cascade_goals && (
+        <button
+          onClick={() => { window.location.href = `/map?focus=${nearReward.cascade_goals!.id}` }}
+          className="w-full rounded-xl p-3 flex items-center gap-3 text-left transition-colors hover:bg-[#b8f04a]/10"
+          style={{ backgroundColor: '#b8f04a15', border: '1px solid #b8f04a40' }}
+        >
+          <span className="text-lg flex-shrink-0">🎁</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-[#0c3230]">
+              <span className="font-semibold">
+                {Math.round((nearReward.cascade_goals.current_value / (nearReward.cascade_goals.target_value ?? 1)) * 100)}%
+              </span>
+              {' '}av veien til {nearReward.cascade_goals.title}
+            </p>
+            <p className="text-xs text-[#0c3230]/50 mt-0.5">{nearReward.title}</p>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0c3230" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 opacity-30">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
+      )}
+
+      {/* 5. UKEN — one line */}
+      <p className="text-xs text-[#0c3230]/50">
+        Denne uken: {weekWorkouts > 0 ? `${weekWorkouts} treninger` : '0 treninger'}
+        {weekSpent > 0 ? ` · ${formatKr(weekSpent)} brukt` : ''}
+        {' '}· {weekHabitsDone}/{weeklyTarget} habits
+        {streak > 0 ? ` · ${streak}d streak` : ''}
+      </p>
 
       {/* Bottom padding for mobile nav */}
       <div className="h-4" />

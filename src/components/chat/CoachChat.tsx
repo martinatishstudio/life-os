@@ -164,11 +164,15 @@ export function CoachChat() {
 
       if (data.error) throw new Error(data.error)
 
+      const savedEntries = data.savedEntries as Array<{category: string; entry_type: string; title: string}> | undefined
+      const savedSuffix = savedEntries && savedEntries.length > 0
+        ? `\n\n_Lagret ${savedEntries.length} ${savedEntries.length === 1 ? 'entry' : 'entries'}_`
+        : ''
       const assistantMsg: CoachMessage = {
         id: crypto.randomUUID(),
         user_id: userId,
         role: 'assistant',
-        content: data.response,
+        content: data.response + savedSuffix,
         created_at: new Date().toISOString(),
       }
       setMessages(prev => [...prev, assistantMsg])

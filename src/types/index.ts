@@ -220,10 +220,51 @@ export interface CascadeGoalProgress {
   logged_at: string
 }
 
+export interface SavedEntry {
+  category: string
+  entry_type: string
+  title: string
+}
+
+export interface Reward {
+  id: string
+  goal_id: string
+  title: string
+  description?: string
+  estimated_cost?: number
+  unlocked: boolean
+  unlocked_at?: string
+  created_at: string
+}
+
+export interface LifeEntry {
+  id: string
+  user_id: string
+  category: string
+  entry_type: string
+  title: string
+  value?: number
+  unit?: string
+  date: string
+  recurrence?: string
+  metadata?: Record<string, unknown>
+  source?: string
+  ai_categorized?: boolean
+  created_at: string
+}
+
+export interface VendorMapping {
+  id: string
+  vendor_pattern: string
+  category: string
+  is_necessary: boolean
+}
+
 export interface CoachMessage {
   id: string
   user_id: string
   role: 'user' | 'assistant'
   content: string
   created_at: string
+  saved_entries?: SavedEntry[]
 }

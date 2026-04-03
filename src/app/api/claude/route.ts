@@ -21,8 +21,8 @@ export async function POST(request: NextRequest) {
       clearCoachContextCache()
     }
 
-    const response = await callClaude(userMessage)
-    return NextResponse.json({ response })
+    const result = await callClaude(userMessage)
+    return NextResponse.json({ response: result.text, savedEntries: result.savedEntries })
   } catch (error) {
     console.error('Claude API error:', error)
     return NextResponse.json({ error: 'Noe gikk galt med Claude API' }, { status: 500 })

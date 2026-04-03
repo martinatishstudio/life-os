@@ -1,5 +1,26 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import type { Habit, HabitCompletion, CascadeGoal, JournalEntry } from '@/types'
+
+interface TodayReward {
+  id: string
+  title: string
+  goal_id: string
+  cascade_goals: {
+    id: string
+    title: string
+    current_value: number
+    target_value: number | null
+    unit: string | null
+    category: string
+  } | null
+}
+
+interface WeekEntry {
+  category: string
+  entry_type: string
+  value: number | null
+  unit: string | null
+}
 import { TodayClient } from '@/components/today/TodayClient'
 import { toDateString } from '@/lib/utils'
 
@@ -34,9 +55,10 @@ export default async function TodayPage() {
     completionsRes,
     allCompletionsRes,
     dayGoalsRes,
-    weekGoalsRes,
     weeklyReviewRes,
     monthlyReviewRes,
+    rewardsRes,
+    weekEntriesRes,
   ] = await Promise.all([
     // Today's brief
     supabase.from('journal_entries').select('*')
@@ -53,9 +75,6 @@ export default async function TodayPage() {
     supabase.from('cascade_goals').select('*')
       .eq('time_horizon', 'day').eq('status', 'active')
       .gte('deadline', today).lte('start_date', today),
-    // Week cascade goals
-    supabase.from('cascade_goals').select('*')
-      .eq('time_horizon', 'week').eq('status', 'active'),
     // This week's weekly review (check if done)
     supabase.from('journal_entries').select('id')
       .eq('type', 'weekly_review')
@@ -64,6 +83,12 @@ export default async function TodayPage() {
     supabase.from('journal_entries').select('id')
       .eq('type', 'monthly_review')
       .gte('date', monthStart).lte('date', monthEnd).limit(1),
+    // Rewards near unlock (with parent goal data)
+    supabase.from('rewards').select('*, cascade_goals(id, title, current_value, target_value, unit, category)')
+      .eq('unlocked', false),
+    // Life entries this week (for week summary)
+    supabase.from('life_entries').select('category, entry_type, value, unit')
+      .gte('date', weekStartStr).lte('date', weekEndStr),
   ])
 
   // Calculate streak
@@ -143,10 +168,11 @@ export default async function TodayPage() {
         habits={habits}
         completions={(completionsRes.data ?? []) as HabitCompletion[]}
         dayGoals={(dayGoalsRes.data ?? []) as CascadeGoal[]}
-        weekGoals={(weekGoalsRes.data ?? []) as CascadeGoal[]}
         streak={streak}
         weekHabitsDone={weekHabitsDone}
         weeklyTarget={weeklyTarget}
+        rewards={(rewardsRes.data ?? []) as TodayReward[]}
+        weekEntries={(weekEntriesRes.data ?? []) as WeekEntry[]}
         hasTodayBrief={!!briefEntry?.ai_response}
         todayBrief={briefEntry?.ai_response ?? null}
         todayBriefId={briefEntry?.id ?? null}

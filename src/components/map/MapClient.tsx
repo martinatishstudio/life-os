@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import type { CascadeGoal, Category, TimeHorizon } from '@/types'
+import type { CascadeGoal, Category, TimeHorizon, Reward } from '@/types'
 import { CATEGORIES, CATEGORY_MAP, TIME_HORIZON_ORDER } from '@/types'
 import { createClient } from '@/lib/supabase'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -294,14 +294,21 @@ interface DetailPanelProps {
   goalsById: Map<string, CascadeGoal>
   allGoals: CascadeGoal[]
   userId: string
+  rewards: Reward[]
   onClose: () => void
   onNavigate: (goalId: string, horizon: TimeHorizon) => void
   onRefresh: () => void
 }
 
-function DetailPanel({ goal, childrenMap, goalsById, userId, onClose, onNavigate, onRefresh }: DetailPanelProps) {
+function DetailPanel({ goal, childrenMap, goalsById, userId, rewards, onClose, onNavigate, onRefresh }: DetailPanelProps) {
   const supabase = createClient()
   const { toast } = useToast()
+  const goalReward = rewards.find(r => r.goal_id === goal.id)
+  const [showRewardForm, setShowRewardForm] = useState(false)
+  const [rewardTitle, setRewardTitle] = useState('')
+  const [rewardDesc, setRewardDesc] = useState('')
+  const [rewardCost, setRewardCost] = useState('')
+  const [rewardSaving, setRewardSaving] = useState(false)
 
   const [title, setTitle] = useState(goal.title)
   const [description, setDescription] = useState(goal.description ?? '')
@@ -682,6 +689,103 @@ function DetailPanel({ goal, childrenMap, goalsById, userId, onClose, onNavigate
               {creatingSuggestions ? 'Oppretter...' : `Opprett valgte (${selectedSuggestions.size})`}
             </button>
           </div>
+        )}
+      </div>
+
+      {/* Reward */}
+      <div className="mt-4 pt-4 border-t border-gray-100">
+        {goalReward ? (
+          <div className="flex items-start gap-2">
+            <span className="text-base">🎁</span>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-[#0c3230]">{goalReward.title}</p>
+              {goalReward.description && (
+                <p className="text-xs text-[#0c3230]/60 mt-0.5">{goalReward.description}</p>
+              )}
+              {goalReward.estimated_cost != null && (
+                <p className="text-xs text-[#0c3230]/40 mt-0.5">{goalReward.estimated_cost.toLocaleString('nb-NO')} kr</p>
+              )}
+              {goal.status === 'completed' && !goalReward.unlocked && (
+                <button
+                  onClick={async () => {
+                    await supabase.from('rewards').update({ unlocked: true, unlocked_at: new Date().toISOString() }).eq('id', goalReward.id)
+                    toast('Belønning låst opp!', 'success')
+                    onRefresh()
+                  }}
+                  className="mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                  style={{ backgroundColor: '#b8f04a', color: '#0c3230' }}
+                >
+                  Lås opp belønningen!
+                </button>
+              )}
+              {goalReward.unlocked && (
+                <p className="text-xs font-medium mt-1" style={{ color: '#3dbfb5' }}>Opplåst!</p>
+              )}
+            </div>
+          </div>
+        ) : showRewardForm ? (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-[#0c3230]/50">Legg til belønning</p>
+            <input
+              value={rewardTitle}
+              onChange={e => setRewardTitle(e.target.value)}
+              placeholder="Belønning (f.eks. Ny klokke)"
+              className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 outline-none focus:border-[#3dbfb5]"
+              autoFocus
+            />
+            <input
+              value={rewardDesc}
+              onChange={e => setRewardDesc(e.target.value)}
+              placeholder="Beskrivelse (valgfritt)"
+              className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 outline-none focus:border-[#3dbfb5]"
+            />
+            <input
+              type="number"
+              value={rewardCost}
+              onChange={e => setRewardCost(e.target.value)}
+              placeholder="Estimert kostnad i kr (valgfritt)"
+              className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 outline-none focus:border-[#3dbfb5]"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  if (!rewardTitle.trim()) return
+                  setRewardSaving(true)
+                  await supabase.from('rewards').insert({
+                    goal_id: goal.id,
+                    title: rewardTitle.trim(),
+                    description: rewardDesc.trim() || null,
+                    estimated_cost: rewardCost ? parseFloat(rewardCost) : null,
+                  })
+                  setRewardSaving(false)
+                  setShowRewardForm(false)
+                  setRewardTitle('')
+                  setRewardDesc('')
+                  setRewardCost('')
+                  toast('Belønning lagt til!', 'success')
+                  onRefresh()
+                }}
+                disabled={rewardSaving || !rewardTitle.trim()}
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+                style={{ backgroundColor: '#0c3230', color: '#b8f04a' }}
+              >
+                {rewardSaving ? 'Lagrer...' : 'Lagre'}
+              </button>
+              <button
+                onClick={() => setShowRewardForm(false)}
+                className="text-xs text-[#0c3230]/50 hover:text-[#0c3230]"
+              >
+                Avbryt
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowRewardForm(true)}
+            className="text-xs text-[#3dbfb5] hover:underline flex items-center gap-1"
+          >
+            <span>🎁</span> Legg til belønning
+          </button>
         )}
       </div>
 
@@ -1085,9 +1189,10 @@ function TimelineView({ goals, childrenMap, onSelect }: TimelineViewProps) {
 interface MapClientProps {
   goals: CascadeGoal[]
   userId: string
+  rewards: Reward[]
 }
 
-export function MapClient({ goals, userId }: MapClientProps) {
+export function MapClient({ goals, userId, rewards }: MapClientProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const focusId = searchParams.get('focus')
@@ -1318,6 +1423,7 @@ export function MapClient({ goals, userId }: MapClientProps) {
                       goalsById={goalsById}
                       allGoals={goals}
                       userId={userId}
+                      rewards={rewards}
                       onClose={() => setExpandedGoalId(null)}
                       onNavigate={handleNavigate}
                       onRefresh={handleRefresh}
